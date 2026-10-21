@@ -1,4 +1,3 @@
-
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
@@ -120,12 +119,12 @@ private:
 
 public:
     void applySettings() {
-        // Stage 0 = Off; stages 1–6 enable prediction.
+        // Stage 0 = Off; stages 1–8 enable prediction.
         int stage = static_cast<int>(
             Mod::get()->getSettingValue<int64_t>("stage")
         );
 
-        stage = std::clamp(stage, 0, 6);
+        stage = std::clamp(stage, 0, 8);
 
         if (stage == m_appliedStage) {
             return;
@@ -193,6 +192,24 @@ public:
                 m_maxTicksWave = 32;
                 log::info(
                     "[InputBuffer] Stage 6: 32 normal / 32 wave ticks"
+                );
+                break;
+
+            case 7:
+                m_enabled = true;
+                m_maxTicksNormal = 64;
+                m_maxTicksWave = 32;
+                log::info(
+                    "[InputBuffer] Stage 7: 64 normal / 32 wave ticks"
+                );
+                break;
+
+            case 8:
+                m_enabled = true;
+                m_maxTicksNormal = 64;
+                m_maxTicksWave = 64;
+                log::info(
+                    "[InputBuffer] Stage 8: 64 normal / 64 wave ticks"
                 );
                 break;
         }
@@ -461,11 +478,18 @@ public:
             return true;
         }
 
+        // Track physical state and suppress repeated events that do not
+        // represent a change from released to pressed or pressed to released.
+        bool wasPhysicallyHolding = m_physicalHolding;
         m_physicalHolding = push;
 
         if (!m_enabled) {
             m_gameHolding = push;
             return true;
+        }
+
+        if (push == wasPhysicallyHolding) {
+            return false;
         }
 
         PlayerObject* p1 = layer->m_player1;
