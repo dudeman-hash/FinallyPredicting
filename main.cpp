@@ -1,3 +1,4 @@
+
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
@@ -8,6 +9,7 @@
 #include <Geode/modify/HardStreak.hpp>
 #include <algorithm>
 #include <cstdint>
+#include <deque>
 
 using namespace geode::prelude;
 
@@ -33,7 +35,7 @@ private:
 
     int m_waitTicks = -1;
     bool m_bufferedPush = true;
-    bool m_queuedOpposite = false;
+    std::deque<bool> m_pendingInputs;
     float m_frameDt = 0.25f;
 
     int m_ticksSinceLastInput = 999;
@@ -111,7 +113,7 @@ private:
 
     void clearPendingInput() {
         m_waitTicks = -1;
-        m_queuedOpposite = false;
+        m_pendingInputs.clear();
         m_bufferedPush = true;
         m_ticksSinceLastInput = 999;
         m_rapidInputStreak = 0;
@@ -119,7 +121,6 @@ private:
 
 public:
     void applySettings() {
-        // Stage 0 = Off; stages 1–8 enable prediction.
         int stage = static_cast<int>(
             Mod::get()->getSettingValue<int64_t>("stage")
         );
@@ -471,15 +472,14 @@ public:
 
         if (!isPlayer1) {
             if (isDual && !isTwoPlayerControl &&
-                (m_waitTicks >= 0 || m_waitTicks == -2)) {
+                (m_waitTicks >= 0 || !m_pendingInputs.empty())) {
                 return false;
             }
 
             return true;
         }
 
-        // Track physical state and suppress repeated events that do not
-        // represent a change from released to pressed or pressed to released.
+        // Ignore duplicate events that do not change physical button state.
         bool wasPhysicallyHolding = m_physicalHolding;
         m_physicalHolding = push;
 
@@ -507,19 +507,12 @@ public:
             return true;
         }
 
+        // Preserve every press/release transition received while an input
+        // is waiting for its predicted timing.
         if (m_waitTicks >= 0) {
-            m_queuedOpposite = push != m_bufferedPush;
+            m_pendingInputs.push_back(push);
             m_ticksSinceLastInput = 0;
             return false;
-        }
-
-        if (m_waitTicks == -2) {
-            m_waitTicks = -1;
-            m_queuedOpposite = false;
-
-            if (m_gameHolding != !m_bufferedPush) {
-                m_SimFireButton(pl, !m_bufferedPush);
-            }
         }
 
         bool isWave =
@@ -539,6 +532,7 @@ public:
 
         m_ticksSinceLastInput = 0;
 
+        // Keep the existing fast path for sustained wave spam.
         if (isWave &&
             m_rapidInputStreak >= SPAM_STREAK_REQUIRED) {
             m_gameHolding = push;
@@ -556,7 +550,6 @@ public:
             return true;
         }
 
-        m_queuedOpposite = false;
         const char* act = push ? "PRESS" : "RELEASE";
 
         int targetHorizon =
@@ -667,24 +660,32 @@ public:
         }
 
         if (m_waitTicks == 0) {
+            // Deliver the input selected by the prediction.
             m_SimFireButton(pl, m_bufferedPush);
-
-            if (m_queuedOpposite) {
-                m_waitTicks = -2;
-                m_queuedOpposite = false;
-            } else {
-                m_waitTicks = -1;
-            }
-        } else if (m_waitTicks > 0) {
-            m_waitTicks--;
-        } else if (m_waitTicks == -2) {
-            m_SimFireButton(pl, !m_bufferedPush);
-            m_queuedOpposite = false;
             m_waitTicks = -1;
-        } else if (m_waitTicks == -1) {
-            if (m_gameHolding != m_physicalHolding) {
-                m_SimFireButton(pl, m_physicalHolding);
-            }
+
+            // Process queued transitions on subsequent updates.
+            return;
+        }
+
+        if (m_waitTicks > 0) {
+            m_waitTicks--;
+            return;
+        }
+
+        // Deliver one queued transition per update so a quick press/release
+        // pair is not collapsed into only its final held state.
+        if (!m_pendingInputs.empty()) {
+            bool nextInput = m_pendingInputs.front();
+            m_pendingInputs.pop_front();
+
+            m_SimFireButton(pl, nextInput);
+            return;
+        }
+
+        if (m_waitTicks == -1 &&
+            m_gameHolding != m_physicalHolding) {
+            m_SimFireButton(pl, m_physicalHolding);
         }
     }
 
