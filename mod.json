@@ -5,19 +5,19 @@
     "win": "2.2081",
     "ios": "2.2081"
   },
-  "version": "v1.0.1",
+  "version": "v1.0.2",
   "id": "ai.predictivebuffer",
   "name": "Predictive Input Buffer",
   "developer": "1EV",
-  "description": "Trajectory-based predictive input buffer with extended buffering stages.",
+  "description": "Trajectory-based predictive input buffer with six buffering stages.",
   "settings": {
     "stage": {
       "name": "Buffer Stage",
-      "description": "0 = Off, 1 = 2/2 ticks, 2 = 4/4 ticks, 3 = 8/8 ticks, 4 = 16/8 ticks, 5 = 32/16 ticks (normal/wave).",
+      "description": "0 = Off, 1 = 2/2 ticks, 2 = 4/4 ticks, 3 = 8/8 ticks, 4 = 16/8 ticks, 5 = 32/16 ticks, 6 = 32/32 ticks (normal/wave).",
       "type": "int",
       "default": 1,
       "min": 0,
-      "max": 5,
+      "max": 6,
       "control": {
         "slider": true
       }
