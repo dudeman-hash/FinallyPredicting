@@ -6,7 +6,6 @@
 #include <Geode/modify/GameObject.hpp>
 #include <Geode/modify/EffectGameObject.hpp>
 #include <Geode/modify/HardStreak.hpp>
-
 #include <algorithm>
 #include <cstdint>
 
@@ -27,7 +26,6 @@ private:
     bool m_physicalHolding = false;
     bool m_gameHolding = false;
     bool m_ignoreHeldInput = false;
-
     int m_appliedStage = -1;
     bool m_enabled = true;
     int m_maxTicksNormal = 2;
@@ -86,10 +84,15 @@ private:
             return;
         }
 
-        sim->setVisible(false);
         sim->copyAttributes(real);
+
+        // Explicitly synchronise the clone's starting transform.
+        sim->setPosition(real->getPosition());
+        sim->setRotation(real->getRotation());
         sim->setScale(real->getScale());
         sim->setContentSize(real->getContentSize());
+        sim->setVisible(false);
+
         sim->m_width = real->m_width;
         sim->m_height = real->m_height;
         sim->m_gravityMod = real->m_gravityMod;
@@ -117,7 +120,7 @@ private:
 
 public:
     void applySettings() {
-        // Setting values are: 0 = Off, 1 = Stage 1 ... 4 = Stage 4.
+        // 0 = Off, 1–4 = prediction stages.
         int stage = static_cast<int>(
             Mod::get()->getSettingValue<int64_t>("stage")
         );
@@ -143,28 +146,36 @@ public:
                 m_enabled = true;
                 m_maxTicksNormal = 2;
                 m_maxTicksWave = 2;
-                log::info("[InputBuffer] Stage 1: 2 normal / 2 wave ticks");
+                log::info(
+                    "[InputBuffer] Stage 1: 2 normal / 2 wave ticks"
+                );
                 break;
 
             case 2:
                 m_enabled = true;
                 m_maxTicksNormal = 4;
                 m_maxTicksWave = 4;
-                log::info("[InputBuffer] Stage 2: 4 normal / 4 wave ticks");
+                log::info(
+                    "[InputBuffer] Stage 2: 4 normal / 4 wave ticks"
+                );
                 break;
 
             case 3:
                 m_enabled = true;
                 m_maxTicksNormal = 8;
                 m_maxTicksWave = 8;
-                log::info("[InputBuffer] Stage 3: 8 normal / 8 wave ticks");
+                log::info(
+                    "[InputBuffer] Stage 3: 8 normal / 8 wave ticks"
+                );
                 break;
 
             case 4:
                 m_enabled = true;
                 m_maxTicksNormal = 16;
                 m_maxTicksWave = 8;
-                log::info("[InputBuffer] Stage 4: 16 normal / 8 wave ticks");
+                log::info(
+                    "[InputBuffer] Stage 4: 16 normal / 8 wave ticks"
+                );
                 break;
         }
     }
@@ -211,7 +222,6 @@ public:
         m_ignoreHeldInput = false;
     }
 
-    // Called before the original level restart function.
     void resetForRestart() {
         bool wasHolding = m_physicalHolding;
 
@@ -221,16 +231,14 @@ public:
         m_firingBuffered = false;
         m_simulationDead = false;
 
-        // If the user is still touching the screen, do not replay
-        // repeated press events until a release is received.
+        // Prevent repeated presses while a touch remains held through restart.
         m_ignoreHeldInput = wasHolding;
-
-        // Keep the held state until the release arrives.
         m_physicalHolding = wasHolding;
         m_gameHolding = false;
 
         log::info(
-            "[InputBuffer] Level restart: cleared pending input; held input guarded={}",
+            "[InputBuffer] Level restart: cleared pending input; "
+            "held input guarded={}",
             m_ignoreHeldInput
         );
     }
@@ -275,7 +283,7 @@ public:
         int maxTicks
     ) {
         if (!pl || !m_simPlayer1 || !realP1) {
-            return maxTicks;
+            return 0;
         }
 
         m_simulating = true;
@@ -287,6 +295,7 @@ public:
             syncSimPlayer(m_simPlayer2, realP2);
         }
 
+        // Keep the current input state until the candidate delay expires.
         if (delayFrames > 0) {
             if (!actionPush) {
                 m_simPlayer1->pushButton(PlayerButton::Jump);
@@ -403,17 +412,14 @@ public:
             return true;
         }
 
-        // Read the current saved setting so changes take effect in-game.
         applySettings();
 
-        // Ignore repeated down events while a touch held through restart.
         if (m_ignoreHeldInput) {
             if (push) {
                 m_physicalHolding = true;
                 return false;
             }
 
-            // The user has released the touch; normal input can resume.
             m_physicalHolding = false;
             m_gameHolding = false;
             m_ignoreHeldInput = false;
@@ -460,12 +466,7 @@ public:
         }
 
         if (m_waitTicks >= 0) {
-            if (push != m_bufferedPush) {
-                m_queuedOpposite = true;
-            } else {
-                m_queuedOpposite = false;
-            }
-
+            m_queuedOpposite = push != m_bufferedPush;
             m_ticksSinceLastInput = 0;
             return false;
         }
@@ -514,7 +515,6 @@ public:
         }
 
         m_queuedOpposite = false;
-
         const char* act = push ? "PRESS" : "RELEASE";
 
         int targetHorizon =
@@ -534,6 +534,7 @@ public:
                 act,
                 ticksFrame0
             );
+
             m_gameHolding = push;
             return true;
         }
@@ -541,47 +542,36 @@ public:
         int bestDelay = 0;
         int bestTicks = ticksFrame0;
 
+        // Test every permitted delay. Accept any genuine improvement
+        // instead of requiring an arbitrary minimum survival gain.
         for (int delay = 1; delay <= maxDelayFrames; delay++) {
             int ticks = getSurvivalTicks(
                 pl, p1, p2, isDual, delay, push, targetHorizon
             );
 
-            if (isWave) {
-                int minClearedGain = (delay * 2) + 10;
+            log::debug(
+                "[InputBuffer] Candidate delay={} survival={} baseline={}",
+                delay,
+                ticks,
+                ticksFrame0
+            );
 
-                if (ticks >= targetHorizon &&
-                    (ticks - ticksFrame0) >= (delay * 2) + 6) {
-                    bestDelay = delay;
-                    bestTicks = ticks;
-                    break;
-                }
+            if (ticks > bestTicks) {
+                bestDelay = delay;
+                bestTicks = ticks;
+            }
 
-                if (ticks >= ticksFrame0 + minClearedGain &&
-                    ticks > bestTicks + 2) {
-                    bestDelay = delay;
-                    bestTicks = ticks;
-
-                    if (ticks >= targetHorizon) {
-                        break;
-                    }
-                }
-            } else {
-                if (ticks >= targetHorizon) {
-                    bestDelay = delay;
-                    bestTicks = ticks;
-                    break;
-                }
-
-                if (ticks > bestTicks + 12) {
-                    bestDelay = delay;
-                    bestTicks = ticks;
-                }
+            if (ticks >= targetHorizon && ticks > ticksFrame0) {
+                bestDelay = delay;
+                bestTicks = ticks;
+                break;
             }
         }
 
         if (bestDelay > 0) {
             log::info(
-                "[InputBuffer] Buffered {}: delay={} ticks, survival {} -> {}, limit={}",
+                "[InputBuffer] Buffered {}: delay={} ticks, "
+                "survival {} -> {}, limit={}",
                 act,
                 bestDelay,
                 ticksFrame0,
@@ -610,8 +600,6 @@ public:
             return;
         }
 
-        // Never replay queued transitions while waiting for a release
-        // after a restart with the screen still held.
         if (m_ignoreHeldInput) {
             return;
         }
