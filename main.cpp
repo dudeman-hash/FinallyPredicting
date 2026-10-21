@@ -1,3 +1,4 @@
+
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
@@ -86,7 +87,6 @@ private:
 
         sim->copyAttributes(real);
 
-        // Explicitly synchronise the real player's transform.
         sim->setPosition(real->getPosition());
         sim->setRotation(real->getRotation());
         sim->setScale(real->getScale());
@@ -120,12 +120,12 @@ private:
 
 public:
     void applySettings() {
-        // Setting values: 0 = Off, 1–4 = prediction stages.
+        // Stage 0 = Off; stages 1–5 enable prediction.
         int stage = static_cast<int>(
             Mod::get()->getSettingValue<int64_t>("stage")
         );
 
-        stage = std::clamp(stage, 0, 4);
+        stage = std::clamp(stage, 0, 5);
 
         if (stage == m_appliedStage) {
             return;
@@ -177,6 +177,15 @@ public:
                     "[InputBuffer] Stage 4: 16 normal / 8 wave ticks"
                 );
                 break;
+
+            case 5:
+                m_enabled = true;
+                m_maxTicksNormal = 32;
+                m_maxTicksWave = 16;
+                log::info(
+                    "[InputBuffer] Stage 5: 32 normal / 16 wave ticks"
+                );
+                break;
         }
     }
 
@@ -223,7 +232,9 @@ public:
     }
 
     void resetForRestart() {
-        bool wasHolding = m_physicalHolding;
+        // Guard the restart if either tracking variable says
+        // the input was held before the restart.
+        bool wasHolding = m_physicalHolding || m_gameHolding;
 
         clearPendingInput();
 
@@ -280,7 +291,6 @@ public:
         bool actionPush,
         int maxTicks
     ) {
-        // A failed prediction must not be treated as guaranteed survival.
         if (!pl || !m_simPlayer1 || !realP1) {
             log::warn(
                 "[InputBuffer] Prediction unavailable: missing player or layer"
@@ -543,7 +553,6 @@ public:
         int bestDelay = 0;
         int bestTicks = ticksFrame0;
 
-        // Test all permitted delays and select the best predicted result.
         for (int delay = 1; delay <= maxDelayFrames; delay++) {
             int ticks = getSurvivalTicks(
                 pl, p1, p2, isDual, delay, push, targetHorizon
