@@ -22,7 +22,6 @@ jobs:
         with:
           target: iOS
           use-lto: false
-          configure-args: "-DCMAKE_APPLE_ARCH_SYSROOTS= -DCMAKE_OSX_SYSROOT=iphoneos"
 
       - name: Upload iOS package
         uses: actions/upload-artifact@v4
