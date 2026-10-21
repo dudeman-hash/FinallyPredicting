@@ -86,7 +86,7 @@ private:
 
         sim->copyAttributes(real);
 
-        // Explicitly synchronise the clone's starting transform.
+        // Explicitly synchronise the real player's transform.
         sim->setPosition(real->getPosition());
         sim->setRotation(real->getRotation());
         sim->setScale(real->getScale());
@@ -120,7 +120,7 @@ private:
 
 public:
     void applySettings() {
-        // 0 = Off, 1–4 = prediction stages.
+        // Setting values: 0 = Off, 1–4 = prediction stages.
         int stage = static_cast<int>(
             Mod::get()->getSettingValue<int64_t>("stage")
         );
@@ -231,14 +231,12 @@ public:
         m_firingBuffered = false;
         m_simulationDead = false;
 
-        // Prevent repeated presses while a touch remains held through restart.
         m_ignoreHeldInput = wasHolding;
         m_physicalHolding = wasHolding;
         m_gameHolding = false;
 
         log::info(
-            "[InputBuffer] Level restart: cleared pending input; "
-            "held input guarded={}",
+            "[InputBuffer] Level restart: cleared pending input; held input guarded={}",
             m_ignoreHeldInput
         );
     }
@@ -282,7 +280,11 @@ public:
         bool actionPush,
         int maxTicks
     ) {
+        // A failed prediction must not be treated as guaranteed survival.
         if (!pl || !m_simPlayer1 || !realP1) {
+            log::warn(
+                "[InputBuffer] Prediction unavailable: missing player or layer"
+            );
             return 0;
         }
 
@@ -295,7 +297,6 @@ public:
             syncSimPlayer(m_simPlayer2, realP2);
         }
 
-        // Keep the current input state until the candidate delay expires.
         if (delayFrames > 0) {
             if (!actionPush) {
                 m_simPlayer1->pushButton(PlayerButton::Jump);
@@ -542,18 +543,17 @@ public:
         int bestDelay = 0;
         int bestTicks = ticksFrame0;
 
-        // Test every permitted delay. Accept any genuine improvement
-        // instead of requiring an arbitrary minimum survival gain.
+        // Test all permitted delays and select the best predicted result.
         for (int delay = 1; delay <= maxDelayFrames; delay++) {
             int ticks = getSurvivalTicks(
                 pl, p1, p2, isDual, delay, push, targetHorizon
             );
 
-            log::debug(
-                "[InputBuffer] Candidate delay={} survival={} baseline={}",
+            log::info(
+                "[InputBuffer] Prediction: delay={} baseline={} candidate={}",
                 delay,
-                ticks,
-                ticksFrame0
+                ticksFrame0,
+                ticks
             );
 
             if (ticks > bestTicks) {
@@ -570,8 +570,7 @@ public:
 
         if (bestDelay > 0) {
             log::info(
-                "[InputBuffer] Buffered {}: delay={} ticks, "
-                "survival {} -> {}, limit={}",
+                "[InputBuffer] Buffered {}: delay={} ticks, survival {} -> {}, limit={}",
                 act,
                 bestDelay,
                 ticksFrame0,
