@@ -9,5 +9,18 @@
   "id": "ai.predictivebuffer",
   "name": "Predictive Input Buffer",
   "developer": "1EV",
-  "description": "Trajectory-based 1-2 frame press and wave release input buffer."
+  "description": "Trajectory-based predictive input buffer.",
+  "settings": {
+    "stage": {
+      "name": "Buffer Stage",
+      "description": "0 = Off, 1 = 2/2 ticks, 2 = 4/4 ticks, 3 = 8/8 ticks, 4 = 16/8 ticks.",
+      "type": "int",
+      "default": 1,
+      "min": 0,
+      "max": 4,
+      "control": {
+        "slider": true
+      }
+    }
+  }
 }
