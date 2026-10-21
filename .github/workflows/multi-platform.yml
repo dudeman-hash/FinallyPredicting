@@ -1,34 +1,31 @@
 
-name: Build Predictive Input Buffer for iOS
+name: Build iOS
 
 on:
-  workflow_dispatch:
   push:
     branches:
-      - "**"
+      - main
+  workflow_dispatch:
 
 jobs:
   build-ios:
-    name: Build iOS
-    runs-on: macos-latest
+    runs-on: macos-15
 
     steps:
-      - name: Checkout source
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build iOS mod
-        id: build
+      - name: Build Geode mod
         uses: geode-sdk/build-geode-mod@main
         with:
-          target: iOS
           sdk: 5.11.2
+          target: iOS
           bindings-ref: 1605f500d053f8de122bf5c7dc6d17c24866e02e
           configure-args: -DSKIP_BUILDING_CODEGEN=OFF
           use-lto: false
 
-      - name: Upload iOS package
+      - name: Upload mod artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Predictive-Input-Buffer-iOS
-          path: ${{ steps.build.outputs.build-output }}/*.geode
-          if-no-files-found: error
+          name: predictive-input-buffer-ios
+          path: build/*.geode
