@@ -479,7 +479,6 @@ public:
             return true;
         }
 
-        // Ignore duplicate events that do not change physical button state.
         bool wasPhysicallyHolding = m_physicalHolding;
         m_physicalHolding = push;
 
@@ -507,14 +506,6 @@ public:
             return true;
         }
 
-        // Preserve every press/release transition received while an input
-        // is waiting for its predicted timing.
-        if (m_waitTicks >= 0) {
-            m_pendingInputs.push_back(push);
-            m_ticksSinceLastInput = 0;
-            return false;
-        }
-
         bool isWave =
             p1->m_isDart ||
             (isDual && p2 && p2->m_isDart);
@@ -524,6 +515,29 @@ public:
             (isDual && p2 && p2->m_isDart &&
                 p2->m_vehicleSize < 1.0f);
 
+        // A new physical wave input takes priority over a stale prediction.
+        if (isWave && m_waitTicks >= 0) {
+            m_waitTicks = -1;
+            m_pendingInputs.clear();
+
+            m_ticksSinceLastInput = 0;
+            m_rapidInputStreak = 0;
+
+            if (push == m_gameHolding) {
+                return false;
+            }
+
+            m_gameHolding = push;
+            return true;
+        }
+
+        // Preserve queued transitions for non-wave modes.
+        if (m_waitTicks >= 0) {
+            m_pendingInputs.push_back(push);
+            m_ticksSinceLastInput = 0;
+            return false;
+        }
+
         if (m_ticksSinceLastInput < SPAM_INTERVAL_TICKS) {
             m_rapidInputStreak++;
         } else {
@@ -532,7 +546,6 @@ public:
 
         m_ticksSinceLastInput = 0;
 
-        // Keep the existing fast path for sustained wave spam.
         if (isWave &&
             m_rapidInputStreak >= SPAM_STREAK_REQUIRED) {
             m_gameHolding = push;
@@ -660,11 +673,8 @@ public:
         }
 
         if (m_waitTicks == 0) {
-            // Deliver the input selected by the prediction.
             m_SimFireButton(pl, m_bufferedPush);
             m_waitTicks = -1;
-
-            // Process queued transitions on subsequent updates.
             return;
         }
 
@@ -673,13 +683,15 @@ public:
             return;
         }
 
-        // Deliver one queued transition per update so a quick press/release
-        // pair is not collapsed into only its final held state.
+        // Preserve queued transitions for non-wave modes.
         if (!m_pendingInputs.empty()) {
             bool nextInput = m_pendingInputs.front();
             m_pendingInputs.pop_front();
 
-            m_SimFireButton(pl, nextInput);
+            if (nextInput != m_gameHolding) {
+                m_SimFireButton(pl, nextInput);
+            }
+
             return;
         }
 
