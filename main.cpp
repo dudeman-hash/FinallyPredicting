@@ -89,7 +89,6 @@ private:
         }
 
         sim->copyAttributes(real);
-
         sim->setPosition(real->getPosition());
         sim->setRotation(real->getRotation());
         sim->setScale(real->getScale());
@@ -123,8 +122,12 @@ private:
 
 public:
     int getStage() const {
-        return static_cast<int>(
-            Mod::get()->getSettingValue<int64_t>("stage")
+        return std::clamp(
+            static_cast<int>(
+                Mod::get()->getSettingValue<int64_t>("stage")
+            ),
+            0,
+            8
         );
     }
 
@@ -140,11 +143,7 @@ public:
     }
 
     void applySettings() {
-        int stage = static_cast<int>(
-            Mod::get()->getSettingValue<int64_t>("stage")
-        );
-
-        stage = std::clamp(stage, 0, 8);
+        int stage = getStage();
 
         if (stage == m_appliedStage) {
             return;
@@ -165,72 +164,56 @@ public:
                 m_enabled = true;
                 m_maxTicksNormal = 2;
                 m_maxTicksWave = 2;
-                log::info(
-                    "[InputBuffer] Stage 1: 2 normal / 2 wave ticks"
-                );
+                log::info("[InputBuffer] Stage 1: 2 normal / 2 wave ticks");
                 break;
 
             case 2:
                 m_enabled = true;
                 m_maxTicksNormal = 4;
                 m_maxTicksWave = 4;
-                log::info(
-                    "[InputBuffer] Stage 2: 4 normal / 4 wave ticks"
-                );
+                log::info("[InputBuffer] Stage 2: 4 normal / 4 wave ticks");
                 break;
 
             case 3:
                 m_enabled = true;
                 m_maxTicksNormal = 8;
                 m_maxTicksWave = 8;
-                log::info(
-                    "[InputBuffer] Stage 3: 8 normal / 8 wave ticks"
-                );
+                log::info("[InputBuffer] Stage 3: 8 normal / 8 wave ticks");
                 break;
 
             case 4:
                 m_enabled = true;
                 m_maxTicksNormal = 16;
                 m_maxTicksWave = 8;
-                log::info(
-                    "[InputBuffer] Stage 4: 16 normal / 8 wave ticks"
-                );
+                log::info("[InputBuffer] Stage 4: 16 normal / 8 wave ticks");
                 break;
 
             case 5:
                 m_enabled = true;
                 m_maxTicksNormal = 32;
                 m_maxTicksWave = 16;
-                log::info(
-                    "[InputBuffer] Stage 5: 32 normal / 16 wave ticks"
-                );
+                log::info("[InputBuffer] Stage 5: 32 normal / 16 wave ticks");
                 break;
 
             case 6:
                 m_enabled = true;
                 m_maxTicksNormal = 32;
                 m_maxTicksWave = 32;
-                log::info(
-                    "[InputBuffer] Stage 6: 32 normal / 32 wave ticks"
-                );
+                log::info("[InputBuffer] Stage 6: 32 normal / 32 wave ticks");
                 break;
 
             case 7:
                 m_enabled = true;
                 m_maxTicksNormal = 64;
                 m_maxTicksWave = 32;
-                log::info(
-                    "[InputBuffer] Stage 7: 64 normal / 32 wave ticks"
-                );
+                log::info("[InputBuffer] Stage 7: 64 normal / 32 wave ticks");
                 break;
 
             case 8:
                 m_enabled = true;
                 m_maxTicksNormal = 64;
                 m_maxTicksWave = 64;
-                log::info(
-                    "[InputBuffer] Stage 8: 64 normal / 64 wave ticks"
-                );
+                log::info("[InputBuffer] Stage 8: 64 normal / 64 wave ticks");
                 break;
         }
     }
@@ -534,7 +517,6 @@ public:
             (isDual && p2 && p2->m_isDart &&
                 p2->m_vehicleSize < 1.0f);
 
-        // A new physical wave input takes priority over a stale prediction.
         if (isWave && m_waitTicks >= 0) {
             m_waitTicks = -1;
             m_pendingInputs.clear();
@@ -550,7 +532,6 @@ public:
             return true;
         }
 
-        // Preserve queued transitions for non-wave modes.
         if (m_waitTicks >= 0) {
             m_pendingInputs.push_back(push);
             m_ticksSinceLastInput = 0;
@@ -702,7 +683,6 @@ public:
             return;
         }
 
-        // Preserve queued transitions for non-wave modes.
         if (!m_pendingInputs.empty()) {
             bool nextInput = m_pendingInputs.front();
             m_pendingInputs.pop_front();
@@ -802,20 +782,25 @@ class $modify(BufPlayLayer, PlayLayer) {
     }
 };
 
-// Pause-menu stage selector.
 class $modify(BufPauseLayer, PauseLayer) {
-    CCLabelBMFont* m_bufferStageLabel = nullptr;
+    struct Fields {
+        CCLabelBMFont* m_bufferStageLabel = nullptr;
+    };
 
     void updateBufferStageLabel() {
-        if (!m_bufferStageLabel) {
+        if (!m_fields->m_bufferStageLabel) {
             return;
         }
 
-        int stage = std::clamp(s_sim.getStage(), 0, 8);
-
         char label[32];
-        std::snprintf(label, sizeof(label), "STAGE %d", stage);
-        m_bufferStageLabel->setString(label);
+        std::snprintf(
+            label,
+            sizeof(label),
+            "STAGE %d",
+            s_sim.getStage()
+        );
+
+        m_fields->m_bufferStageLabel->setString(label);
     }
 
     void onPreviousBufferStage(CCObject*) {
@@ -853,13 +838,12 @@ class $modify(BufPauseLayer, PauseLayer) {
             "bigFont.fnt"
         );
 
-        m_bufferStageLabel = CCLabelBMFont::create(
+        auto stageLabel = CCLabelBMFont::create(
             "STAGE 0",
             "bigFont.fnt"
         );
 
-        if (!previousLabel || !nextLabel || !m_bufferStageLabel) {
-            m_bufferStageLabel = nullptr;
+        if (!previousLabel || !nextLabel || !stageLabel) {
             stageMenu->release();
             return;
         }
@@ -877,21 +861,21 @@ class $modify(BufPauseLayer, PauseLayer) {
         );
 
         if (!previousButton || !nextButton) {
-            m_bufferStageLabel = nullptr;
             stageMenu->release();
             return;
         }
 
         previousButton->setPosition({-90.f, 0.f});
-        m_bufferStageLabel->setPosition({0.f, 0.f});
+        stageLabel->setPosition({0.f, 0.f});
         nextButton->setPosition({90.f, 0.f});
 
         stageMenu->addChild(previousButton);
-        stageMenu->addChild(m_bufferStageLabel);
+        stageMenu->addChild(stageLabel);
         stageMenu->addChild(nextButton);
 
         this->addChild(stageMenu, 1000);
 
+        m_fields->m_bufferStageLabel = stageLabel;
         updateBufferStageLabel();
     }
 };
