@@ -21,7 +21,7 @@ jobs:
         uses: geode-sdk/build-geode-mod@main
         with:
           target: iOS
-          configure-args: -DCMAKE_OSX_SYSROOT=iphoneos
+          use-lto: false
 
       - name: Upload iOS package
         uses: actions/upload-artifact@v4
