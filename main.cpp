@@ -1,6 +1,7 @@
 
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PlayLayer.hpp>
+#include <Geode/modify/PauseLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/LevelEditorLayer.hpp>
@@ -9,6 +10,7 @@
 #include <Geode/modify/HardStreak.hpp>
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <deque>
 
 using namespace geode::prelude;
@@ -120,6 +122,23 @@ private:
     }
 
 public:
+    int getStage() const {
+        return static_cast<int>(
+            Mod::get()->getSettingValue<int64_t>("stage")
+        );
+    }
+
+    void setStage(int stage) {
+        stage = std::clamp(stage, 0, 8);
+
+        Mod::get()->setSettingValue<int64_t>(
+            "stage",
+            static_cast<int64_t>(stage)
+        );
+
+        applySettings();
+    }
+
     void applySettings() {
         int stage = static_cast<int>(
             Mod::get()->getSettingValue<int64_t>("stage")
@@ -780,6 +799,100 @@ class $modify(BufPlayLayer, PlayLayer) {
     void onQuit() {
         s_sim.quit();
         PlayLayer::onQuit();
+    }
+};
+
+// Pause-menu stage selector.
+class $modify(BufPauseLayer, PauseLayer) {
+    CCLabelBMFont* m_bufferStageLabel = nullptr;
+
+    void updateBufferStageLabel() {
+        if (!m_bufferStageLabel) {
+            return;
+        }
+
+        int stage = std::clamp(s_sim.getStage(), 0, 8);
+
+        char label[32];
+        std::snprintf(label, sizeof(label), "STAGE %d", stage);
+        m_bufferStageLabel->setString(label);
+    }
+
+    void onPreviousBufferStage(CCObject*) {
+        s_sim.setStage(s_sim.getStage() - 1);
+        updateBufferStageLabel();
+    }
+
+    void onNextBufferStage(CCObject*) {
+        s_sim.setStage(s_sim.getStage() + 1);
+        updateBufferStageLabel();
+    }
+
+    void customSetup() {
+        PauseLayer::customSetup();
+
+        auto winSize = CCDirector::sharedDirector()->getWinSize();
+
+        auto stageMenu = CCMenu::create();
+        if (!stageMenu) {
+            return;
+        }
+
+        stageMenu->setPosition({
+            winSize.width / 2.f,
+            winSize.height * 0.22f
+        });
+
+        auto previousLabel = CCLabelBMFont::create(
+            "<",
+            "bigFont.fnt"
+        );
+
+        auto nextLabel = CCLabelBMFont::create(
+            ">",
+            "bigFont.fnt"
+        );
+
+        m_bufferStageLabel = CCLabelBMFont::create(
+            "STAGE 0",
+            "bigFont.fnt"
+        );
+
+        if (!previousLabel || !nextLabel || !m_bufferStageLabel) {
+            m_bufferStageLabel = nullptr;
+            stageMenu->release();
+            return;
+        }
+
+        auto previousButton = CCMenuItemLabel::create(
+            previousLabel,
+            this,
+            menu_selector(BufPauseLayer::onPreviousBufferStage)
+        );
+
+        auto nextButton = CCMenuItemLabel::create(
+            nextLabel,
+            this,
+            menu_selector(BufPauseLayer::onNextBufferStage)
+        );
+
+        if (!previousButton || !nextButton) {
+            m_bufferStageLabel = nullptr;
+            stageMenu->release();
+            return;
+        }
+
+        previousButton->setPosition({-90.f, 0.f});
+        m_bufferStageLabel->setPosition({0.f, 0.f});
+        nextButton->setPosition({90.f, 0.f});
+
+        stageMenu->addChild(previousButton);
+        stageMenu->addChild(m_bufferStageLabel);
+        stageMenu->addChild(nextButton);
+
+        this->addChild(stageMenu, 1000);
+
+        updateBufferStageLabel();
     }
 };
 
