@@ -120,12 +120,12 @@ private:
 
 public:
     void applySettings() {
-        // Stage 0 = Off; stages 1–5 enable prediction.
+        // Stage 0 = Off; stages 1–6 enable prediction.
         int stage = static_cast<int>(
             Mod::get()->getSettingValue<int64_t>("stage")
         );
 
-        stage = std::clamp(stage, 0, 5);
+        stage = std::clamp(stage, 0, 6);
 
         if (stage == m_appliedStage) {
             return;
@@ -186,6 +186,15 @@ public:
                     "[InputBuffer] Stage 5: 32 normal / 16 wave ticks"
                 );
                 break;
+
+            case 6:
+                m_enabled = true;
+                m_maxTicksNormal = 32;
+                m_maxTicksWave = 32;
+                log::info(
+                    "[InputBuffer] Stage 6: 32 normal / 32 wave ticks"
+                );
+                break;
         }
     }
 
@@ -232,8 +241,6 @@ public:
     }
 
     void resetForRestart() {
-        // Guard the restart if either tracking variable says
-        // the input was held before the restart.
         bool wasHolding = m_physicalHolding || m_gameHolding;
 
         clearPendingInput();
