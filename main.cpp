@@ -7,19 +7,14 @@
 #include <Geode/modify/GameObject.hpp>
 #include <Geode/modify/EffectGameObject.hpp>
 #include <Geode/modify/HardStreak.hpp>
-#include <cstdio>
+
 #include <algorithm>
+#include <cstdint>
 
 using namespace geode::prelude;
 
-// ============================================================================
-// USER SETTINGS
-// ============================================================================
-
 constexpr int SPAM_INTERVAL_TICKS = 8;
 constexpr int SPAM_STREAK_REQUIRED = 3;
-
-// ============================================================================
 
 class TrajectoryBufferSim {
 private:
@@ -32,26 +27,33 @@ private:
 
     bool m_physicalHolding = false;
     bool m_gameHolding = false;
+    bool m_ignoreHeldInput = false;
 
-    int  m_presetIndex = 0;
+    int m_appliedStage = -1;
     bool m_enabled = true;
-    int  m_maxTicksNormal = 2;
-    int  m_maxTicksWave = 2;
+    int m_maxTicksNormal = 2;
+    int m_maxTicksWave = 2;
 
-    int  m_waitTicks = -1;
+    int m_waitTicks = -1;
     bool m_bufferedPush = true;
     bool m_queuedOpposite = false;
     float m_frameDt = 0.25f;
 
-    int  m_ticksSinceLastInput = 999;
-    int  m_rapidInputStreak = 0;
+    int m_ticksSinceLastInput = 999;
+    int m_rapidInputStreak = 0;
 
     PlayerObject* createTrajectoryPlayer() {
         PlayLayer* pl = PlayLayer::get();
-        if (!pl) return nullptr;
+        if (!pl || !pl->m_objectLayer) {
+            return nullptr;
+        }
 
-        PlayerObject* player = PlayerObject::create(1, 1, pl, pl, true);
-        if (!player) return nullptr;
+        PlayerObject* player =
+            PlayerObject::create(1, 1, pl, pl, true);
+
+        if (!player) {
+            return nullptr;
+        }
 
         player->retain();
         player->setPosition({0, 105});
@@ -61,17 +63,29 @@ private:
         return player;
     }
 
-    void resetCollisionLog(PlayerObject* self) {
-        if (!self) return;
+    void resetCollisionLog(PlayerObject* player) {
+        if (!player) {
+            return;
+        }
 
-        self->m_collisionLogTop->removeAllObjects();
-        self->m_collisionLogBottom->removeAllObjects();
-        self->m_collisionLogLeft->removeAllObjects();
-        self->m_collisionLogRight->removeAllObjects();
+        if (player->m_collisionLogTop) {
+            player->m_collisionLogTop->removeAllObjects();
+        }
+        if (player->m_collisionLogBottom) {
+            player->m_collisionLogBottom->removeAllObjects();
+        }
+        if (player->m_collisionLogLeft) {
+            player->m_collisionLogLeft->removeAllObjects();
+        }
+        if (player->m_collisionLogRight) {
+            player->m_collisionLogRight->removeAllObjects();
+        }
     }
 
     void syncSimPlayer(PlayerObject* sim, PlayerObject* real) {
-        if (!sim || !real) return;
+        if (!sim || !real) {
+            return;
+        }
 
         sim->setVisible(false);
         sim->copyAttributes(real);
@@ -90,26 +104,88 @@ private:
         if (m_frameDt > 0.001f && m_frameDt < 2.0f) {
             return m_frameDt;
         }
+
         return 0.25f;
     }
 
+    void clearPendingInput() {
+        m_waitTicks = -1;
+        m_queuedOpposite = false;
+        m_bufferedPush = true;
+        m_ticksSinceLastInput = 999;
+        m_rapidInputStreak = 0;
+    }
+
 public:
+    void applySettings() {
+        // Setting values are: 0 = Off, 1 = Stage 1 ... 4 = Stage 4.
+        int stage = static_cast<int>(
+            Mod::get()->getSettingValue<int64_t>("stage")
+        );
+
+        stage = std::clamp(stage, 0, 4);
+
+        if (stage == m_appliedStage) {
+            return;
+        }
+
+        m_appliedStage = stage;
+        clearPendingInput();
+
+        switch (stage) {
+            case 0:
+                m_enabled = false;
+                m_maxTicksNormal = 0;
+                m_maxTicksWave = 0;
+                log::info("[InputBuffer] Stage 0: OFF");
+                break;
+
+            case 1:
+                m_enabled = true;
+                m_maxTicksNormal = 2;
+                m_maxTicksWave = 2;
+                log::info("[InputBuffer] Stage 1: 2 normal / 2 wave ticks");
+                break;
+
+            case 2:
+                m_enabled = true;
+                m_maxTicksNormal = 4;
+                m_maxTicksWave = 4;
+                log::info("[InputBuffer] Stage 2: 4 normal / 4 wave ticks");
+                break;
+
+            case 3:
+                m_enabled = true;
+                m_maxTicksNormal = 8;
+                m_maxTicksWave = 8;
+                log::info("[InputBuffer] Stage 3: 8 normal / 8 wave ticks");
+                break;
+
+            case 4:
+                m_enabled = true;
+                m_maxTicksNormal = 16;
+                m_maxTicksWave = 8;
+                log::info("[InputBuffer] Stage 4: 16 normal / 8 wave ticks");
+                break;
+        }
+    }
+
     void init() {
-        PlayLayer* pl = PlayLayer::get();
-        if (!pl) return;
+        quit();
 
         m_simPlayer1 = createTrajectoryPlayer();
         m_simPlayer2 = createTrajectoryPlayer();
 
-        m_waitTicks = -1;
-        m_queuedOpposite = false;
         m_physicalHolding = false;
         m_gameHolding = false;
+        m_ignoreHeldInput = false;
         m_simulating = false;
         m_firingBuffered = false;
         m_simulationDead = false;
-        m_ticksSinceLastInput = 999;
-        m_rapidInputStreak = 0;
+
+        clearPendingInput();
+        m_appliedStage = -1;
+        applySettings();
     }
 
     void quit() {
@@ -127,52 +203,37 @@ public:
 
         m_simulating = false;
         m_firingBuffered = false;
-        m_waitTicks = -1;
-        m_queuedOpposite = false;
-        m_rapidInputStreak = 0;
+        m_simulationDead = false;
+
+        clearPendingInput();
+
+        m_physicalHolding = false;
+        m_gameHolding = false;
+        m_ignoreHeldInput = false;
     }
 
-    void cyclePreset() {
-        m_presetIndex = (m_presetIndex + 1) % 5;
-        m_waitTicks = -1;
-        m_queuedOpposite = false;
+    // Called before the original level restart function.
+    void resetForRestart() {
+        bool wasHolding = m_physicalHolding;
 
-        switch (m_presetIndex) {
-            case 0:
-                m_enabled = true;
-                m_maxTicksNormal = 2;
-                m_maxTicksWave = 2;
-                log::info("[InputBuffer] Stage 1: 2 normal / 2 wave ticks");
-                break;
+        clearPendingInput();
 
-            case 1:
-                m_enabled = true;
-                m_maxTicksNormal = 4;
-                m_maxTicksWave = 4;
-                log::info("[InputBuffer] Stage 2: 4 normal / 4 wave ticks");
-                break;
+        m_simulating = false;
+        m_firingBuffered = false;
+        m_simulationDead = false;
 
-            case 2:
-                m_enabled = true;
-                m_maxTicksNormal = 8;
-                m_maxTicksWave = 8;
-                log::info("[InputBuffer] Stage 3: 8 normal / 8 wave ticks");
-                break;
+        // If the user is still touching the screen, do not replay
+        // repeated press events until a release is received.
+        m_ignoreHeldInput = wasHolding;
 
-            case 3:
-                m_enabled = true;
-                m_maxTicksNormal = 16;
-                m_maxTicksWave = 8;
-                log::info("[InputBuffer] Stage 4: 16 normal / 8 wave ticks");
-                break;
+        // Keep the held state until the release arrives.
+        m_physicalHolding = wasHolding;
+        m_gameHolding = false;
 
-            case 4:
-                m_enabled = false;
-                m_maxTicksNormal = 0;
-                m_maxTicksWave = 0;
-                log::info("[InputBuffer] Stage 5: OFF");
-                break;
-        }
+        log::info(
+            "[InputBuffer] Level restart: cleared pending input; held input guarded={}",
+            m_ignoreHeldInput
+        );
     }
 
     bool isSimulating() const {
@@ -190,11 +251,8 @@ public:
             return true;
         }
 
-        m_waitTicks = -1;
-        m_queuedOpposite = false;
+        clearPendingInput();
         m_gameHolding = false;
-        m_rapidInputStreak = 0;
-
         return false;
     }
 
@@ -286,18 +344,24 @@ public:
                 m_simPlayer2->updateRotation(dt);
             }
 
-            if (m_simulationDead) break;
+            if (m_simulationDead) {
+                break;
+            }
 
             resetCollisionLog(m_simPlayer1);
             pl->checkCollisions(m_simPlayer1, dt, false);
 
-            if (m_simulationDead) break;
+            if (m_simulationDead) {
+                break;
+            }
 
             if (isDual && m_simPlayer2 && realP2) {
                 resetCollisionLog(m_simPlayer2);
                 pl->checkCollisions(m_simPlayer2, dt, false);
 
-                if (m_simulationDead) break;
+                if (m_simulationDead) {
+                    break;
+                }
             }
 
             if (i >= delayFrames) {
@@ -335,7 +399,28 @@ public:
         bool isPlayer1
     ) {
         PlayLayer* pl = PlayLayer::get();
-        if (!pl) return true;
+
+        if (!pl) {
+            return true;
+        }
+
+        // Read the current saved setting so changes take effect in-game.
+        applySettings();
+
+        // Ignore repeated down events while a touch held through restart.
+        if (m_ignoreHeldInput) {
+            if (push) {
+                m_physicalHolding = true;
+                return false;
+            }
+
+            // The user has released the touch; normal input can resume.
+            m_physicalHolding = false;
+            m_gameHolding = false;
+            m_ignoreHeldInput = false;
+            clearPendingInput();
+            return true;
+        }
 
         bool isDual =
             pl->m_gameState.m_isDualMode &&
@@ -364,15 +449,13 @@ public:
         PlayerObject* p2 = isDual ? pl->m_player2 : nullptr;
 
         if (!p1 || p1->m_isDead) {
-            m_waitTicks = -1;
-            m_queuedOpposite = false;
+            clearPendingInput();
             m_gameHolding = push;
             return true;
         }
 
         if (p1->m_isShip || (isDual && p2 && p2->m_isShip)) {
-            m_waitTicks = -1;
-            m_queuedOpposite = false;
+            clearPendingInput();
             m_gameHolding = push;
             return true;
         }
@@ -447,6 +530,11 @@ public:
         );
 
         if (ticksFrame0 >= targetHorizon) {
+            log::debug(
+                "[InputBuffer] {} passed immediately; survival={}",
+                act,
+                ticksFrame0
+            );
             m_gameHolding = push;
             return true;
         }
@@ -474,7 +562,9 @@ public:
                     bestDelay = delay;
                     bestTicks = ticks;
 
-                    if (ticks >= targetHorizon) break;
+                    if (ticks >= targetHorizon) {
+                        break;
+                    }
                 }
             } else {
                 if (ticks >= targetHorizon) {
@@ -492,10 +582,9 @@ public:
 
         if (bestDelay > 0) {
             log::info(
-                "[InputBuffer] Saved +{} ticks ({:.2f} frames @ 60fps) {}. Frame0: {} -> Delayed: {} [Limit: {}]",
-                bestDelay,
-                bestDelay / 4.0f,
+                "[InputBuffer] Buffered {}: delay={} ticks, survival {} -> {}, limit={}",
                 act,
+                bestDelay,
                 ticksFrame0,
                 bestTicks,
                 maxDelayFrames
@@ -506,17 +595,33 @@ public:
             return false;
         }
 
+        log::debug(
+            "[InputBuffer] No beneficial delay for {}; input passed through",
+            act
+        );
+
         m_gameHolding = push;
         return true;
     }
 
     void onPlayerUpdate(PlayerObject* player) {
         PlayLayer* pl = PlayLayer::get();
-        if (!pl || player != pl->m_player1) return;
 
-        // F6 was Windows-only. Preset cycling needs an iOS UI control.
+        if (!pl || player != pl->m_player1) {
+            return;
+        }
 
-        if (!m_enabled) return;
+        // Never replay queued transitions while waiting for a release
+        // after a restart with the screen still held.
+        if (m_ignoreHeldInput) {
+            return;
+        }
+
+        applySettings();
+
+        if (!m_enabled) {
+            return;
+        }
 
         if (m_ticksSinceLastInput < 999) {
             m_ticksSinceLastInput++;
@@ -526,8 +631,7 @@ public:
             (pl->m_gameState.m_isDualMode &&
              pl->m_player2 &&
              pl->m_player2->m_isShip)) {
-            m_waitTicks = -1;
-            m_queuedOpposite = false;
+            clearPendingInput();
 
             if (m_gameHolding != m_physicalHolding) {
                 m_SimFireButton(pl, m_physicalHolding);
@@ -559,6 +663,10 @@ public:
     }
 
     void m_SimFireButton(PlayLayer* pl, bool push) {
+        if (!pl || m_ignoreHeldInput) {
+            return;
+        }
+
         m_firingBuffered = true;
         m_gameHolding = push;
 
@@ -576,11 +684,9 @@ public:
 static TrajectoryBufferSim s_sim;
 
 $on_mod(Loaded) {
-    log::info("============================================================");
-    log::info("[InputBuffer] v4.6 loaded");
-    log::info("[InputBuffer] Starting mode: Stage 1 (2 normal / 2 wave ticks)");
-    log::info("[InputBuffer] Windows console and F6 keyboard handling removed for iOS");
-    log::info("============================================================");
+    log::info("[InputBuffer] Loaded");
+    log::info("[InputBuffer] Stage setting is read from Geode settings.");
+    s_sim.applySettings();
 }
 
 class $modify(BufPlayLayer, PlayLayer) {
@@ -590,7 +696,11 @@ class $modify(BufPlayLayer, PlayLayer) {
         (void)self.setHookPriority("PlayLayer::flipGravity", -1000000);
     }
 
-    bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
+    bool init(
+        GJGameLevel* level,
+        bool useReplay,
+        bool dontCreateObjects
+    ) {
         if (!PlayLayer::init(level, useReplay, dontCreateObjects)) {
             return false;
         }
@@ -599,18 +709,32 @@ class $modify(BufPlayLayer, PlayLayer) {
         return true;
     }
 
+    void resetLevel() {
+        s_sim.resetForRestart();
+        PlayLayer::resetLevel();
+    }
+
     void destroyPlayer(PlayerObject* player, GameObject* gameObject) {
-        if (s_sim.checkSimulationDeath(player)) return;
+        if (s_sim.checkSimulationDeath(player)) {
+            return;
+        }
+
         PlayLayer::destroyPlayer(player, gameObject);
     }
 
     void playEndAnimationToPos(cocos2d::CCPoint p0) {
-        if (s_sim.isSimulating()) return;
+        if (s_sim.isSimulating()) {
+            return;
+        }
+
         PlayLayer::playEndAnimationToPos(p0);
     }
 
     void flipGravity(PlayerObject* p0, bool p1, bool p2) {
-        if (s_sim.isSimulating()) return;
+        if (s_sim.isSimulating()) {
+            return;
+        }
+
         PlayLayer::flipGravity(p0, p1, p2);
     }
 
@@ -634,14 +758,20 @@ class $modify(BufHardStreak, HardStreak) {
     }
 
     void addPoint(cocos2d::CCPoint p0) {
-        if (s_sim.isSimulating()) return;
+        if (s_sim.isSimulating()) {
+            return;
+        }
+
         HardStreak::addPoint(p0);
     }
 };
 
 class $modify(BufEffectGameObject, EffectGameObject) {
     static void onModify(auto& self) {
-        (void)self.setHookPriority("EffectGameObject::triggerObject", -1000000);
+        (void)self.setHookPriority(
+            "EffectGameObject::triggerObject",
+            -1000000
+        );
     }
 
     void triggerObject(
@@ -649,39 +779,63 @@ class $modify(BufEffectGameObject, EffectGameObject) {
         int p1,
         const gd::vector<int>* p2
     ) {
-        if (s_sim.isSimulating()) return;
+        if (s_sim.isSimulating()) {
+            return;
+        }
+
         EffectGameObject::triggerObject(p0, p1, p2);
     }
 };
 
 class $modify(BufGameObject, GameObject) {
     static void onModify(auto& self) {
-        (void)self.setHookPriority("GameObject::playShineEffect", -1000000);
+        (void)self.setHookPriority(
+            "GameObject::playShineEffect",
+            -1000000
+        );
     }
 
     void playShineEffect() {
-        if (s_sim.isSimulating()) return;
+        if (s_sim.isSimulating()) {
+            return;
+        }
+
         GameObject::playShineEffect();
     }
 };
 
 class $modify(BufPlayerObject, PlayerObject) {
     static void onModify(auto& self) {
-        (void)self.setHookPriority("PlayerObject::playSpiderDashEffect", -1000000);
-        (void)self.setHookPriority("PlayerObject::incrementJumps", -1000000);
-        (void)self.setHookPriority("PlayerObject::ringJump", -1000000);
+        (void)self.setHookPriority(
+            "PlayerObject::playSpiderDashEffect",
+            -1000000
+        );
+        (void)self.setHookPriority(
+            "PlayerObject::incrementJumps",
+            -1000000
+        );
+        (void)self.setHookPriority(
+            "PlayerObject::ringJump",
+            -1000000
+        );
     }
 
     void playSpiderDashEffect(
         cocos2d::CCPoint from,
         cocos2d::CCPoint to
     ) {
-        if (s_sim.isSimulating()) return;
+        if (s_sim.isSimulating()) {
+            return;
+        }
+
         PlayerObject::playSpiderDashEffect(from, to);
     }
 
     void incrementJumps() {
-        if (s_sim.isSimulating()) return;
+        if (s_sim.isSimulating()) {
+            return;
+        }
+
         PlayerObject::incrementJumps();
     }
 
@@ -698,24 +852,42 @@ class $modify(BufPlayerObject, PlayerObject) {
     }
 
     void ringJump(RingObject* p0, bool p1) {
-        if (s_sim.isSimulating()) return;
+        if (s_sim.isSimulating()) {
+            return;
+        }
+
         PlayerObject::ringJump(p0, p1);
     }
 };
 
 class $modify(BufBaseGameLayer, GJBaseGameLayer) {
     static void onModify(auto& self) {
-        (void)self.setHookPriority("GJBaseGameLayer::canBeActivatedByPlayer", -1000000);
-        (void)self.setHookPriority("GJBaseGameLayer::handleButton", -1000000);
-        (void)self.setHookPriority("GJBaseGameLayer::collisionCheckObjects", -1000000);
-        (void)self.setHookPriority("GJBaseGameLayer::playerTouchedRing", -1000000);
+        (void)self.setHookPriority(
+            "GJBaseGameLayer::canBeActivatedByPlayer",
+            -1000000
+        );
+        (void)self.setHookPriority(
+            "GJBaseGameLayer::handleButton",
+            -1000000
+        );
+        (void)self.setHookPriority(
+            "GJBaseGameLayer::collisionCheckObjects",
+            -1000000
+        );
+        (void)self.setHookPriority(
+            "GJBaseGameLayer::playerTouchedRing",
+            -1000000
+        );
     }
 
     bool canBeActivatedByPlayer(
         PlayerObject* p0,
         EffectGameObject* p1
     ) {
-        if (s_sim.isSimulating()) return false;
+        if (s_sim.isSimulating()) {
+            return false;
+        }
+
         return GJBaseGameLayer::canBeActivatedByPlayer(p0, p1);
     }
 
@@ -744,7 +916,10 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
 
             for (int i = 0; i < objectsCount; i++) {
                 GameObject* obj = vec->at(i);
-                if (!obj) continue;
+
+                if (!obj) {
+                    continue;
+                }
 
                 if (obj->m_objectType == GameObjectType::Solid ||
                     obj->m_objectType == GameObjectType::Hazard ||
@@ -774,7 +949,10 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
     }
 
     void playerTouchedRing(PlayerObject* player, RingObject* ring) {
-        if (s_sim.isSimulating()) return;
+        if (s_sim.isSimulating()) {
+            return;
+        }
+
         GJBaseGameLayer::playerTouchedRing(player, ring);
     }
 };
