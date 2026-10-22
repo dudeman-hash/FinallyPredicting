@@ -331,9 +331,7 @@ public:
                 if (!isContinuousMode) {
                     bool p1Grounded = m_simPlayer1->m_isOnGround;
                     bool p2Grounded =
-                        (!isDual || !m_simPlayer2)
-                            ? true
-                            : m_simPlayer2->m_isOnGround;
+                        (!isDual || !m_simPlayer2) ? true : m_simPlayer2->m_isOnGround;
 
                     if (!p1Grounded || !p2Grounded) {
                         airborneTicks++;
@@ -461,10 +459,7 @@ public:
         );
 
         if (ticksFrame0 >= targetHorizon) {
-            log::debug(
-                "[InputBuffer] {} passed immediately; survival={}",
-                act, ticksFrame0
-            );
+            log::debug("[InputBuffer] {} passed immediately; survival={}", act, ticksFrame0);
             m_gameHolding = push;
             return true;
         }
@@ -504,10 +499,7 @@ public:
             return false;
         }
 
-        log::debug(
-            "[InputBuffer] No beneficial delay for {}; input passed through",
-            act
-        );
+        log::debug("[InputBuffer] No beneficial delay for {}; input passed through", act);
         m_gameHolding = push;
         return true;
     }
@@ -523,8 +515,7 @@ public:
         if (m_ticksSinceLastInput < 999) m_ticksSinceLastInput++;
 
         if (player->m_isShip ||
-            (pl->m_gameState.m_isDualMode && pl->m_player2 &&
-                pl->m_player2->m_isShip)) {
+            (pl->m_gameState.m_isDualMode && pl->m_player2 && pl->m_player2->m_isShip)) {
             clearPendingInput();
             if (m_gameHolding != m_physicalHolding) {
                 m_SimFireButton(pl, m_physicalHolding);
@@ -713,11 +704,7 @@ class $modify(BufEffectGameObject, EffectGameObject) {
         (void)self.setHookPriority("EffectGameObject::triggerObject", -1000000);
     }
 
-    void triggerObject(
-        GJBaseGameLayer* p0,
-        int p1,
-        const gd::vector<int>* p2
-    ) {
+    void triggerObject(GJBaseGameLayer* p0, int p1, const gd::vector<int>* p2) {
         if (s_sim.isSimulating()) return;
         EffectGameObject::triggerObject(p0, p1, p2);
     }
@@ -741,28 +728,27 @@ class $modify(BufPlayerObject, PlayerObject) {
         (void)self.setHookPriority("PlayerObject::ringJump", -1000000);
     }
 
-    void playSpiderDashEffect(
-        cocos2d::CCPoint from,
-        cocos2d::CCPoint to
-    ) {
+    void playSpiderDashEffect(cocos2d::CCPoint from, cocos2d::CCPoint to) {
         if (s_sim.isSimulating()) return;
         PlayerObject::playSpiderDashEffect(from, to);
     }
 
     void incrementJumps() {
-        if (s_sim.isSimulating()) return;
+        // Preserve jump bookkeeping for the simulated player.
+        // Only suppress this method for real players during prediction.
+        if (s_sim.isSimulating() && !s_sim.isSimulationPlayer(this)) return;
         PlayerObject::incrementJumps();
     }
 
     void update(float dt) {
         if (!s_sim.isSimulating()) s_sim.onPlayerUpdate(this);
         PlayerObject::update(dt);
-        if (PlayLayer::get() && !s_sim.isSimulating()) {
-            s_sim.setFrameDelta(dt);
-        }
+        if (PlayLayer::get() && !s_sim.isSimulating()) s_sim.setFrameDelta(dt);
     }
 
     void ringJump(RingObject* p0, bool p1) {
+        // Permit the hidden clone to apply the orb's player-side effect.
+        // Prevent simulated calls from affecting the real player.
         if (s_sim.isSimulating() && !s_sim.isSimulationPlayer(this)) return;
         PlayerObject::ringJump(p0, p1);
     }
@@ -777,6 +763,8 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
     }
 
     bool canBeActivatedByPlayer(PlayerObject* p0, EffectGameObject* p1) {
+        // During prediction, only the hidden simulation players may query
+        // orb eligibility. Keep real players isolated.
         if (s_sim.isSimulating() && !s_sim.isSimulationPlayer(p0)) return false;
         return GJBaseGameLayer::canBeActivatedByPlayer(p0, p1);
     }
@@ -804,6 +792,7 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
                 GameObject* obj = vec->at(i);
                 if (!obj) continue;
 
+                // Identify rings by their actual runtime type.
                 if (obj->m_objectType == GameObjectType::Solid ||
                     obj->m_objectType == GameObjectType::Hazard ||
                     obj->m_objectType == GameObjectType::AnimatedHazard ||
@@ -815,28 +804,23 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
             }
 
             GJBaseGameLayer::collisionCheckObjects(
-                player,
-                &extra,
-                static_cast<int>(extra.size()),
-                dt
+                player, &extra, static_cast<int>(extra.size()), dt
             );
             return;
         }
 
-        GJBaseGameLayer::collisionCheckObjects(
-            player,
-            vec,
-            objectsCount,
-            dt
-        );
+        GJBaseGameLayer::collisionCheckObjects(player, vec, objectsCount, dt);
     }
 
     void playerTouchedRing(PlayerObject* player, RingObject* ring) {
         if (s_sim.isSimulating()) {
+            // Avoid running the full live-level ring handler during prediction.
+            // Apply the orb effect to the hidden clone only.
             if (s_sim.isSimulationPlayer(player) && ring &&
                 player->buttonDown(PlayerButton::Jump) &&
                 GJBaseGameLayer::canBeActivatedByPlayer(player, ring)) {
                 player->ringJump(ring, false);
+                player->addToTouchedRings(ring);
             }
             return;
         }
