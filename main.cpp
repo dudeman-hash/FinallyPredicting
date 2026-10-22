@@ -1,4 +1,3 @@
-
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PauseLayer.hpp>
@@ -225,6 +224,10 @@ public:
 
     bool isSimulating() const { return m_simulating; }
     bool isFiringBuffered() const { return m_firingBuffered; }
+
+    bool isSimulationPlayer(PlayerObject* player) const {
+        return player && (player == m_simPlayer1 || player == m_simPlayer2);
+    }
 
     bool checkSimulationDeath(PlayerObject* player) {
         if (m_simulating && (player == m_simPlayer1 || player == m_simPlayer2)) {
@@ -727,7 +730,9 @@ class $modify(BufPlayerObject, PlayerObject) {
     }
 
     void ringJump(RingObject* p0, bool p1) {
-        if (s_sim.isSimulating()) return;
+        // During prediction, allow the simulated player to apply the orb's
+        // movement effect. Suppress calls from any non-simulated player.
+        if (s_sim.isSimulating() && !s_sim.isSimulationPlayer(this)) return;
         PlayerObject::ringJump(p0, p1);
     }
 };
@@ -741,7 +746,9 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
     }
 
     bool canBeActivatedByPlayer(PlayerObject* p0, EffectGameObject* p1) {
-        if (s_sim.isSimulating()) return false;
+        // During prediction, only the hidden simulation players may query orb
+        // eligibility. Keep the real players and level state isolated.
+        if (s_sim.isSimulating() && !s_sim.isSimulationPlayer(p0)) return false;
         return GJBaseGameLayer::canBeActivatedByPlayer(p0, p1);
     }
 
@@ -772,7 +779,10 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
                     obj->m_objectType == GameObjectType::Hazard ||
                     obj->m_objectType == GameObjectType::AnimatedHazard ||
                     obj->m_objectType == GameObjectType::CollisionObject ||
-                    obj->m_objectType == GameObjectType::Slope) {
+                    obj->m_objectType == GameObjectType::Slope ||
+                    obj->m_objectType == GameObjectType::Ring) {
+                    // Rings must reach the simulated collision pipeline so
+                    // playerTouchedRing can apply the orb effect to the clone.
                     extra.push_back(obj);
                 }
             }
@@ -787,7 +797,20 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
     }
 
     void playerTouchedRing(PlayerObject* player, RingObject* ring) {
-        if (s_sim.isSimulating()) return;
+        if (s_sim.isSimulating()) {
+            // Never run the game's full ring handler against the real level
+            // during prediction. Apply the orb's player-side movement effect
+            // only to our hidden clone, and only while its jump input is held.
+            if (s_sim.isSimulationPlayer(player) && ring &&
+                player->buttonDown(PlayerButton::Jump) &&
+                GJBaseGameLayer::canBeActivatedByPlayer(player, ring)) {
+                // Reuse the game's eligibility check so fake/unusable orbs
+                // aren't treated as valid activations in the prediction.
+                player->ringJump(ring, false);
+            }
+            return;
+        }
+
         GJBaseGameLayer::playerTouchedRing(player, ring);
     }
 };
