@@ -95,12 +95,12 @@ public:
     int getStage() const {
         return std::clamp(
             static_cast<int>(Mod::get()->getSettingValue<int64_t>("stage")),
-            0, 8
+            0, 10
         );
     }
 
     void setStage(int stage) {
-        stage = std::clamp(stage, 0, 8);
+        stage = std::clamp(stage, 0, 10);
         Mod::get()->setSettingValue<int64_t>("stage", static_cast<int64_t>(stage));
         applySettings();
     }
@@ -166,6 +166,18 @@ public:
                 m_maxTicksNormal = 64;
                 m_maxTicksWave = 64;
                 log::info("[InputBuffer] Stage 8: 64 normal / 64 wave ticks");
+                break;
+            case 9:
+                m_enabled = true;
+                m_maxTicksNormal = 128;
+                m_maxTicksWave = 64;
+                log::info("[InputBuffer] Stage 9: 128 normal / 64 wave ticks");
+                break;
+            case 10:
+                m_enabled = true;
+                m_maxTicksNormal = 128;
+                m_maxTicksWave = 128;
+                log::info("[InputBuffer] Stage 10: 128 normal / 128 wave ticks");
                 break;
         }
     }
@@ -262,21 +274,15 @@ public:
         m_simulationDead = false;
         syncSimPlayer(m_simPlayer1, realP1);
 
-        if (isDual && m_simPlayer2 && realP2) {
-            syncSimPlayer(m_simPlayer2, realP2);
-        }
+        if (isDual && m_simPlayer2 && realP2) syncSimPlayer(m_simPlayer2, realP2);
 
         if (delayFrames > 0) {
             if (!actionPush) {
                 m_simPlayer1->pushButton(PlayerButton::Jump);
-                if (isDual && m_simPlayer2) {
-                    m_simPlayer2->pushButton(PlayerButton::Jump);
-                }
+                if (isDual && m_simPlayer2) m_simPlayer2->pushButton(PlayerButton::Jump);
             } else {
                 m_simPlayer1->releaseButton(PlayerButton::Jump);
-                if (isDual && m_simPlayer2) {
-                    m_simPlayer2->releaseButton(PlayerButton::Jump);
-                }
+                if (isDual && m_simPlayer2) m_simPlayer2->releaseButton(PlayerButton::Jump);
             }
         }
 
@@ -294,14 +300,10 @@ public:
             if (i == delayFrames) {
                 if (actionPush) {
                     m_simPlayer1->pushButton(PlayerButton::Jump);
-                    if (isDual && m_simPlayer2) {
-                        m_simPlayer2->pushButton(PlayerButton::Jump);
-                    }
+                    if (isDual && m_simPlayer2) m_simPlayer2->pushButton(PlayerButton::Jump);
                 } else {
                     m_simPlayer1->releaseButton(PlayerButton::Jump);
-                    if (isDual && m_simPlayer2) {
-                        m_simPlayer2->releaseButton(PlayerButton::Jump);
-                    }
+                    if (isDual && m_simPlayer2) m_simPlayer2->releaseButton(PlayerButton::Jump);
                 }
             }
 
@@ -375,9 +377,7 @@ public:
 
         if (!isPlayer1) {
             if (isDual && !isTwoPlayerControl &&
-                (m_waitTicks >= 0 || !m_pendingInputs.empty())) {
-                return false;
-            }
+                (m_waitTicks >= 0 || !m_pendingInputs.empty())) return false;
             return true;
         }
 
@@ -517,9 +517,7 @@ public:
         if (player->m_isShip ||
             (pl->m_gameState.m_isDualMode && pl->m_player2 && pl->m_player2->m_isShip)) {
             clearPendingInput();
-            if (m_gameHolding != m_physicalHolding) {
-                m_SimFireButton(pl, m_physicalHolding);
-            }
+            if (m_gameHolding != m_physicalHolding) m_SimFireButton(pl, m_physicalHolding);
             return;
         }
 
@@ -537,9 +535,7 @@ public:
         if (!m_pendingInputs.empty()) {
             bool nextInput = m_pendingInputs.front();
             m_pendingInputs.pop_front();
-            if (nextInput != m_gameHolding) {
-                m_SimFireButton(pl, nextInput);
-            }
+            if (nextInput != m_gameHolding) m_SimFireButton(pl, nextInput);
             return;
         }
 
@@ -652,6 +648,7 @@ class $modify(BufPauseLayer, PauseLayer) {
 
         if (!previousLabel || !nextLabel || !stageLabel) return;
 
+        // CCMenuItemSpriteExtra uses the Geode-supported menu-item implementation.
         auto previousButton = CCMenuItemSpriteExtra::create(
             previousLabel,
             this,
@@ -734,8 +731,8 @@ class $modify(BufPlayerObject, PlayerObject) {
     }
 
     void incrementJumps() {
-        // Preserve jump bookkeeping for the simulated player.
-        // Only suppress this method for real players during prediction.
+        // Prediction must retain the normal jump bookkeeping on the hidden
+        // clone. Only suppress it for real players while the clone is running.
         if (s_sim.isSimulating() && !s_sim.isSimulationPlayer(this)) return;
         PlayerObject::incrementJumps();
     }
@@ -747,8 +744,8 @@ class $modify(BufPlayerObject, PlayerObject) {
     }
 
     void ringJump(RingObject* p0, bool p1) {
-        // Permit the hidden clone to apply the orb's player-side effect.
-        // Prevent simulated calls from affecting the real player.
+        // During prediction, allow the simulated player to apply the orb's
+        // movement effect. Suppress calls from any non-simulated player.
         if (s_sim.isSimulating() && !s_sim.isSimulationPlayer(this)) return;
         PlayerObject::ringJump(p0, p1);
     }
@@ -763,8 +760,8 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
     }
 
     bool canBeActivatedByPlayer(PlayerObject* p0, EffectGameObject* p1) {
-        // During prediction, only the hidden simulation players may query
-        // orb eligibility. Keep real players isolated.
+        // During prediction, only the hidden simulation players may query orb
+        // eligibility. Keep the real players and level state isolated.
         if (s_sim.isSimulating() && !s_sim.isSimulationPlayer(p0)) return false;
         return GJBaseGameLayer::canBeActivatedByPlayer(p0, p1);
     }
@@ -792,13 +789,20 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
                 GameObject* obj = vec->at(i);
                 if (!obj) continue;
 
-                // Identify rings by their actual runtime type.
+                // Do not rely on GameObjectType to identify rings: RingObject
+                // instances are the authoritative check for orb collision.
+                // Keeping them in this list lets the game's collision pipeline
+                // invoke playerTouchedRing for the hidden simulation player.
                 if (obj->m_objectType == GameObjectType::Solid ||
                     obj->m_objectType == GameObjectType::Hazard ||
                     obj->m_objectType == GameObjectType::AnimatedHazard ||
                     obj->m_objectType == GameObjectType::CollisionObject ||
                     obj->m_objectType == GameObjectType::Slope ||
-                    typeinfo_cast<RingObject*>(obj) != nullptr) {
+                    typeinfo_cast<RingObject*>(obj) != nullptr ||
+                    // Keep effect objects in the clone's collision pass so the
+                    // game's normal pad-contact path can see them. Effect triggers
+                    // remain suppressed below to avoid mutating the live level.
+                    typeinfo_cast<EffectGameObject*>(obj) != nullptr) {
                     extra.push_back(obj);
                 }
             }
@@ -814,11 +818,15 @@ class $modify(BufBaseGameLayer, GJBaseGameLayer) {
 
     void playerTouchedRing(PlayerObject* player, RingObject* ring) {
         if (s_sim.isSimulating()) {
-            // Avoid running the full live-level ring handler during prediction.
-            // Apply the orb effect to the hidden clone only.
+            // Never run the game's full ring handler against the real level
+            // during prediction. Apply the orb's player-side movement effect
+            // only to our hidden clone, and only while its jump input is held.
             if (s_sim.isSimulationPlayer(player) && ring &&
                 player->buttonDown(PlayerButton::Jump) &&
                 GJBaseGameLayer::canBeActivatedByPlayer(player, ring)) {
+                // Apply the orb's player-side movement effect to the clone only.
+                // Do not call the full layer handler: it can mutate the real ring
+                // object and the live level state during a prediction pass.
                 player->ringJump(ring, false);
                 player->addToTouchedRings(ring);
             }
