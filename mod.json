@@ -1,4 +1,3 @@
-
 {
   "geode": "5.11.2",
   "gd": {
@@ -13,7 +12,7 @@
   "settings": {
     "stage": {
       "name": "Buffer Stage",
-      "description": "0 = Off, 1 = 2/2 ticks, 2 = 4/4 ticks, 3 = 8/8 ticks, 4 = 16/8 ticks, 5 = 32/16 ticks, 6 = 32/32 ticks, 7 = 64/32 ticks, 8 = 64/64 ticks, 9 = 128/64 ticks, 10 = 128/128 ticks (normal/wave).",
+      "description": "0 = Off, 1 = 2/2 ticks, 2 = 4/4, 3 = 8/8, 4 = 16/8, 5 = 32/16, 6 = 32/32, 7 = 64/32, 8 = 64/64, 9 = 128/64, 10 = 128/128 ticks (normal/wave).",
       "type": "int",
       "default": 1,
       "min": 0,
